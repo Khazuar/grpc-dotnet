@@ -20,7 +20,6 @@ internal sealed class HttpContentWrapper : HttpContent
     }
 
 #if NET5_0_OR_GREATER
-
     protected override void SerializeToStream(Stream stream, TransportContext? context, CancellationToken cancellationToken)
     {
         using var content = _inner.ReadAsStream(cancellationToken);
@@ -35,7 +34,6 @@ internal sealed class HttpContentWrapper : HttpContent
             await content.CopyToAsync(stream, cancellationToken).ConfigureAwait(false);
         }
     }
-
 #endif
 
     protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)

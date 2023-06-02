@@ -274,5 +274,46 @@ public class LeastUsedBalancerTests : FunctionalTestBase
         sp2.Continue();
         sp3.Continue();
     }
+
+    [Test]
+    public async Task ServerStreamingCall_ErrorResult_ActiveCountChanges()
+    {
+        // Ignore errors
+        SetExpectedErrorsFilter(writeContext =>
+        {
+            return true;
+        });
+
+        async Task ServerStreamingMethod(HelloRequest request, IServerStreamWriter<HelloReply> responseStream, ServerCallContext context)
+        {
+            await responseStream.WriteAsync(new HelloReply { Message = request.Name });
+            throw new RpcException(new Status(StatusCode.DataLoss, ""));
+        }
+
+        // Arrange
+        using var endpoint = BalancerHelpers.CreateGrpcEndpoint<HelloRequest, HelloReply>(50051, ServerStreamingMethod, nameof(ServerStreamingMethod));
+        var channel = await BalancerHelpers.CreateChannel(LoggerFactory, new LoadBalancingConfig("least_used"), new[] { endpoint.Address }, connect: true);
+
+        await BalancerWaitHelpers.WaitForSubchannelsToBeReadyAsync(
+            Logger,
+            channel,
+            expectedCount: 1,
+            getPickerSubchannels: picker => (picker as LeastUsedPicker)?._subchannels.ToArray() ?? Array.Empty<Subchannel>()).DefaultTimeout();
+
+        var picker = (LeastUsedPicker)channel.ConnectionManager._picker!;
+        Assert.True(picker._subchannels[0].Attributes.TryGetValue(LeastUsedPicker.CounterKey, out var counter));
+
+        var client = TestClientFactory.Create(channel, endpoint.Method);
+
+        // Act
+        var pendingCall1 = client.ServerStreamingCall(new HelloRequest { Name = "Balancer" });
+        // Assert
+        Assert.AreEqual(1, counter!.Value);
+
+        Assert.IsTrue(await pendingCall1.ResponseStream.MoveNext());
+        await ExceptionAssert.ThrowsAsync<RpcException>(() => pendingCall1.ResponseStream.MoveNext());
+
+        Assert.AreEqual(0, counter!.Value);
+    }
 }
 #endif
